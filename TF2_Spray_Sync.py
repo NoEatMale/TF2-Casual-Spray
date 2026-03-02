@@ -37,12 +37,25 @@ def find_tf2_temp_path():
                 library_paths.extend([p.replace('\\\\', '\\') for p in paths])
 
         for lib_path in library_paths:
-            tf2_temp = os.path.join(lib_path, "steamapps", "common", "Team Fortress 2", "tf", "materials", "temp")
-            if os.path.exists(tf2_temp):
+            # 1. 팀포2의 'tf' 폴더까지만 경로를 잡습니다.
+            tf_dir = os.path.join(lib_path, "steamapps", "common", "Team Fortress 2", "tf")
+            
+            # 2. 팀포2가 설치되어 있다면 (tf 폴더가 존재한다면)
+            if os.path.exists(tf_dir):
+                # temp 폴더의 최종 경로를 지정합니다.
+                tf2_temp = os.path.join(tf_dir, "materials", "temp")
+                
+                # 3. temp 폴더가 없으면 에러를 내지 말고, 프로그램이 강제로 만들어줍니다!
+                if not os.path.exists(tf2_temp):
+                    os.makedirs(tf2_temp)
+                    
                 print(f"✅ Found TF2 Temp folder: {tf2_temp}")
                 return tf2_temp
+                
     except Exception as e:
-        pass
+        # 에러를 숨기지 않고(pass 대신) 출력하도록 수정했습니다.
+        print(f"❌ Error details: {e}") 
+        
     return None
 
 # ==========================================
