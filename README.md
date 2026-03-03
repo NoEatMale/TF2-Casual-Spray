@@ -42,7 +42,7 @@ I truly missed the days when we could see everyone's unique and funny custom spr
 * **Lead Developer:** [NoEatMale](https://github.com/NoEatMale)
 * **AI Assistance:** Developed with the support of Google Gemini.
 * **Community Links:** * [Download Latest Version](https://github.com/NoEatMale/TF2-Casual-Spray/releases)
-*                      * [Discord](https://discord.gg/tsuMWykyCE)
+* [Discord](https://discord.gg/tsuMWykyCE)
     * [Report Issues](https://github.com/NoEatMale/TF2-Casual-Spray/issues)
 
 ---
