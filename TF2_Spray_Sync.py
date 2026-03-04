@@ -7,17 +7,51 @@ import winreg
 import sys
 import ctypes
 import zipfile
+import psutil
+from datetime import datetime
+from dotenv import load_dotenv
+
+# ==========================================
+# 🛠️ PyInstaller Resource Path Helper
+# ==========================================
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+# ==========================================
+# 🛡️ 1. Security & Environment Setup (.env Load)
+# ==========================================
+# [Update] Load .env from the bundled resource path
+env_path = resource_path(".env")
+load_dotenv(env_path)
 
 # 🌐 Server URL (Change to your actual domain or Ngrok URL!)
-SERVER_URL = "https://kyleigh-metaphorical-noblemanly.ngrok-free.dev"
-# 🛡️ Bulletproof local Vault (Hidden in AppData)
+SERVER_URL = os.getenv("SERVER_URL", "https://kyleigh-metaphorical-noblemanly.ngrok-free.dev")
+
+# 🔑 [Task 1] Secret Access Key (Retrieved from environment variables)
+ACCESS_SECRET_KEY = os.getenv("No_Eat_KEY")
+
+# 🛡️ Local Vault Path (AppData/Roaming/TFSpray_Vault)
 VAULT_DIR = os.path.join(os.getenv('APPDATA'), 'TFSpray_Vault')
 
+# 🔑 Pre-defined Authentication Headers for the server
+CUSTOM_HEADERS = {
+    'No-Eat-Secret': ACCESS_SECRET_KEY,
+    'ngrok-skip-browser-warning': 'true'
+}
+
 # ==========================================
-# 1. 100% Auto-detect TF2 Path (Registry tracking)
+# 🔍 2. System Detection Logic (TF2 Path & Process)
 # ==========================================
+
 def find_tf2_temp_path():
-    print("🔍 Auto-detecting Steam and Team Fortress 2 installation path...")
+    """Automatically detects TF2 installation path by tracking the Windows Registry."""
     try:
         try:
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam")
@@ -37,183 +71,156 @@ def find_tf2_temp_path():
                 library_paths.extend([p.replace('\\\\', '\\') for p in paths])
 
         for lib_path in library_paths:
-            # 1. 팀포2의 'tf' 폴더까지만 경로를 잡습니다.
             tf_dir = os.path.join(lib_path, "steamapps", "common", "Team Fortress 2", "tf")
-            
-            # 2. 팀포2가 설치되어 있다면 (tf 폴더가 존재한다면)
             if os.path.exists(tf_dir):
-                # temp 폴더의 최종 경로를 지정합니다.
                 tf2_temp = os.path.join(tf_dir, "materials", "temp")
-                
-                # 3. temp 폴더가 없으면 에러를 내지 말고, 프로그램이 강제로 만들어줍니다!
                 if not os.path.exists(tf2_temp):
                     os.makedirs(tf2_temp)
-                    
-                print(f"✅ Found TF2 Temp folder: {tf2_temp}")
                 return tf2_temp
-                
     except Exception as e:
-        # 에러를 숨기지 않고(pass 대신) 출력하도록 수정했습니다.
-        print(f"❌ Error details: {e}") 
-        
+        print(f"❌ Path detection failed: {e}") 
     return None
 
+def is_tf2_running():
+    """Checks if 64-bit or 32-bit Team Fortress 2 is currently running."""
+    target_procs = ['tf_win64.exe', 'hl2.exe']
+    for proc in psutil.process_iter(['name']):
+        try:
+            if proc.info['name'].lower() in target_procs:
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    return False
+
 # ==========================================
-# 2. Auto-add to Windows Startup (1-time Y/N consent)
+# ⚙️ 3. Startup Program Registration
 # ==========================================
+
 def check_and_add_startup():
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    
-    # [1] Silently check if already registered
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
         winreg.QueryValueEx(key, "TFSpraySync")
         winreg.CloseKey(key)
-        return  # Exit function if already registered
-    except FileNotFoundError:
-        pass  # Proceed to ask user if not registered
+        return
+    except FileNotFoundError: pass
 
-    # [2] Ask for user consent (Y/N) if not registered
     print("\n" + "-" * 50)
-    print("⚠️ [Startup Execution Setup]")
-    print("This program automatically syncs TF2 sprays globally in the background.")
-    print("Would you like to register it to run automatically on Windows startup?")
-    print("(※ We ask for consent once to prevent false positives from antivirus software.)")
+    print("⚠️ [Startup Registration]")
+    print("Would you like to run the spray sync automatically when Windows starts?")
+    choice = input("Do you agree? (Y / N) : ").strip().lower()
     
-    while True:
-        choice = input("Do you agree? (Y / N) : ").strip().lower()
-        if choice == 'y':
-            if getattr(sys, 'frozen', False):
-                exe_path = sys.executable
-            else:
-                exe_path = os.path.abspath(__file__)
-            
-            try:
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
-                winreg.SetValueEx(key, "TFSpraySync", 0, winreg.REG_SZ, f'"{exe_path}"')
-                winreg.CloseKey(key)
-                print("✅ Successfully registered to run on Windows startup!")
-            except Exception as e:
-                print(f"❌ Failed to register startup item: {e}")
-            break
-            
-        elif choice == 'n':
-            print("☑️ Startup execution declined. (You will need to run this program manually when playing TF2.)")
-            break
-        else:
-            print("❗ Please enter Y or N.")
+    if choice == 'y':
+        exe_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
+            winreg.SetValueEx(key, "TFSpraySync", 0, winreg.REG_SZ, f'"{exe_path}"')
+            winreg.CloseKey(key)
+            print("✅ Registration complete!")
+        except Exception as e:
+            print(f"❌ Registration failed: {e}")
 
 # ==========================================
-# 3. Two-Track Server-Client Sync Logic
+# 🔄 4. Core Sync Logic
 # ==========================================
+
 def sync_with_server(tf2_temp_dir, do_full_download=False):
-    if not os.path.exists(VAULT_DIR):
-        os.makedirs(VAULT_DIR)
-    if not os.path.exists(tf2_temp_dir):
-        os.makedirs(tf2_temp_dir)
-
+    if not os.path.exists(VAULT_DIR): os.makedirs(VAULT_DIR)
+    
     vault_files = set(os.listdir(VAULT_DIR))
     temp_files = set(os.listdir(tf2_temp_dir))
 
-    # [1] ⚡ Fast Local Restore: Vault -> temp
     for filename in vault_files - temp_files:
-        shutil.copy2(os.path.join(VAULT_DIR, filename), os.path.join(tf2_temp_dir, filename))
+        if filename.endswith('.vtf'):
+            shutil.copy2(os.path.join(VAULT_DIR, filename), os.path.join(tf2_temp_dir, filename))
 
-    # [2] ⚡ Instant Upload: temp -> Vault -> Server (Includes DDoS Protection Lock)
     lock_file = os.path.join(VAULT_DIR, "init_lock.txt")
-    if not os.path.exists(lock_file):
-        # Prevent massive upload of old data on first run
-        with open(lock_file, 'w') as f:
-            f.write("Old data upload blocked.")
-    else:
-        for filename in temp_files - vault_files:
-            temp_path = os.path.join(tf2_temp_dir, filename)
-            # 512KB limit check (512 * 1024)
-            if re.match(r'^[0-9a-f]{8}\.vtf$', filename) and os.path.getsize(temp_path) <= 512 * 1024:
-                shutil.copy2(temp_path, os.path.join(VAULT_DIR, filename)) # Save to Vault
-                try:
-                    with open(temp_path, 'rb') as f:
-                        requests.post(f"{SERVER_URL}/upload", files={"file": f})
-                except:
-                    pass # Ignore errors silently if server is down
+    if os.path.exists(lock_file):
+        to_upload = [f for f in temp_files - vault_files 
+                     if re.match(r'^[0-9a-f]{8}\.vtf$', f) and 
+                     os.path.getsize(os.path.join(tf2_temp_dir, f)) <= 512 * 1024]
 
-    # [3] 🐢 Regular Download: Server -> Vault -> temp
+        if to_upload:
+            if len(to_upload) >= 10:
+                temp_zip = os.path.join(VAULT_DIR, "upload_bundle.zip")
+                with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    for f in to_upload:
+                        src = os.path.join(tf2_temp_dir, f)
+                        zf.write(src, f)
+                        shutil.copy2(src, os.path.join(VAULT_DIR, f))
+                try:
+                    with open(temp_zip, 'rb') as f_obj:
+                        requests.post(f"{SERVER_URL}/upload_zip", files={"file": f_obj}, headers=CUSTOM_HEADERS)
+                    os.remove(temp_zip)
+                except: pass
+            else:
+                for f in to_upload:
+                    path = os.path.join(tf2_temp_dir, f)
+                    shutil.copy2(path, os.path.join(VAULT_DIR, f))
+                    try:
+                        with open(path, 'rb') as f_obj:
+                            requests.post(f"{SERVER_URL}/upload", files={"file": f_obj}, headers=CUSTOM_HEADERS)
+                    except: pass
+    else:
+        with open(lock_file, 'w') as f_obj: f_obj.write("Old data upload blocked.")
+
     if do_full_download:
         try:
-            response = requests.get(f"{SERVER_URL}/list", timeout=10)
-            if response.status_code == 200:
-                server_files = set(response.json().get("files", []))
-                current_vault = set(os.listdir(VAULT_DIR))
-                
-                missing_files = list(server_files - current_vault)
-                
-                if len(missing_files) > 0:
-                    print(f"📥 Found new sprays to download: {len(missing_files)}")
-
-                    # 🌟 Smart Zip Download for 10+ missing files
-                    if len(missing_files) > 10:
-                        print("📦 Mass synchronization in progress. Starting zip download...")
-                        res = requests.post(f"{SERVER_URL}/download_zip", json={"files": missing_files}, stream=True)
-                        if res.status_code == 200:
-                            zip_path = os.path.join(VAULT_DIR, "temp_download.zip")
-                            with open(zip_path, 'wb') as f:
-                                for chunk in res.iter_content(chunk_size=8192):
-                                    f.write(chunk)
-                                    
-                            with zipfile.ZipFile(zip_path, 'r') as zf:
+            res = requests.get(f"{SERVER_URL}/list", headers=CUSTOM_HEADERS, timeout=10)
+            if res.status_code == 200:
+                server_files = set(res.json().get("files", []))
+                missing = list(server_files - set(os.listdir(VAULT_DIR)))
+                if missing:
+                    if len(missing) > 10:
+                        dl_res = requests.post(f"{SERVER_URL}/download_zip", json={"files": missing}, headers=CUSTOM_HEADERS, stream=True)
+                        if dl_res.status_code == 200:
+                            zip_p = os.path.join(VAULT_DIR, "temp_download.zip")
+                            with open(zip_p, 'wb') as f_obj:
+                                for chunk in dl_res.iter_content(8192): f_obj.write(chunk)
+                            with zipfile.ZipFile(zip_p, 'r') as zf:
                                 zf.extractall(VAULT_DIR)
-                                for extracted_file in zf.namelist():
-                                    shutil.copy2(os.path.join(VAULT_DIR, extracted_file), os.path.join(tf2_temp_dir, extracted_file))
-                                    
-                            os.remove(zip_path) 
-                            print("✅ Mass zip download and application complete!")
-                    
-                    # Individual download for 10 or fewer files
+                                for n in zf.namelist():
+                                    shutil.copy2(os.path.join(VAULT_DIR, n), os.path.join(tf2_temp_dir, n))
+                            os.remove(zip_p)
                     else:
-                        for filename in missing_files:
-                            dl_res = requests.get(f"{SERVER_URL}/download/{filename}", timeout=5)
-                            if dl_res.status_code == 200:
-                                vault_path = os.path.join(VAULT_DIR, filename)
-                                with open(vault_path, 'wb') as f:
-                                    f.write(dl_res.content)
-                                shutil.copy2(vault_path, os.path.join(tf2_temp_dir, filename))
-        except Exception as e:
-            pass 
+                        for n in missing:
+                            file_res = requests.get(f"{SERVER_URL}/download/{n}", headers=CUSTOM_HEADERS)
+                            if file_res.status_code == 200:
+                                with open(os.path.join(VAULT_DIR, n), 'wb') as f_obj: f_obj.write(file_res.content)
+                                shutil.copy2(os.path.join(VAULT_DIR, n), os.path.join(tf2_temp_dir, n))
+        except: pass
 
 # ==========================================
-# 4. Main Execution (Optimized for First Run)
+# 🏁 5. Main Execution Loop
 # ==========================================
+
 if __name__ == "__main__":
-    print("=" * 50)
-    print("🌍 TF2 Global Spray Sync Client")
-    print("=" * 50)
-    
+    print("🌍 TF2 Global Spray Sync Client is starting...")
     TF2_TEMP_DIR = find_tf2_temp_path()
+    
     if not TF2_TEMP_DIR:
-        print("❌ Could not find Team Fortress 2 installation path.")
+        print("❌ Could not find TF2 path.")
         time.sleep(5)
         sys.exit()
 
     check_and_add_startup()
     
-    print("\n📦 Running initial sync with the server...")
-    print("This may take some time depending on the number of files. Please wait.")
-    
+    # Initial sync
     sync_with_server(TF2_TEMP_DIR, do_full_download=True)
-    
-    print("✅ Initial sync complete! Switching to background mode.")
-    time.sleep(2)
     
     # Hide console window
     ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
     
     timer = 0 
     while True:
-        if timer >= 300: # Full check every 5 mins
-            sync_with_server(TF2_TEMP_DIR, do_full_download=True)
+        if is_tf2_running():
+            if timer >= 300:
+                sync_with_server(TF2_TEMP_DIR, do_full_download=True)
+                timer = 0
+            else:
+                sync_with_server(TF2_TEMP_DIR, do_full_download=False)
+            time.sleep(10)
+            timer += 10
+        else:
+            time.sleep(30)
             timer = 0
-        else: # Local restore & Instant upload every 10 secs
-            sync_with_server(TF2_TEMP_DIR, do_full_download=False)
-            
-        time.sleep(10)
-        timer += 10
